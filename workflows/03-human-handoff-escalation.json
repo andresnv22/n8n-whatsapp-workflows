@@ -1,0 +1,135 @@
+{
+  "name": "03 - Human Handoff & Escalation Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "handoff-escalation",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-handoff-webhook",
+      "name": "Handoff Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $input.first().json.body || $input.first().json;\nconst text = (payload.message || '').toLowerCase();\nconst highPriority = ['refund', 'complaint', 'manager', 'urgent', 'reembolso', 'queja'].some(k => text.includes(k));\nreturn [{\n  json: {\n    phone: payload.phone || 'unknown',\n    customer: payload.customer || 'Customer',\n    reason: payload.reason || 'Requested human agent',\n    message: payload.message || '',\n    priority: highPriority ? 'HIGH' : 'NORMAL'\n  }\n}];"
+      },
+      "id": "node-classify",
+      "name": "Classify Escalation Priority",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 240]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_ESCALATION_CHAT_ID }}",
+        "text": "={{ '[' + $json.priority + '] WhatsApp handoff\\nCustomer: ' + $json.customer + ' (' + $json.phone + ')\\nReason: ' + $json.reason + '\\nMessage: ' + $json.message }}",
+        "additionalFields": {}
+      },
+      "id": "node-notify-telegram",
+      "name": "Notify Team on Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [700, 160]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://graph.facebook.com/v21.0/' + $env.WHATSAPP_PHONE_NUMBER_ID + '/messages' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.WHATSAPP_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messaging_product: 'whatsapp', to: $('Classify Escalation Priority').item.json.phone, type: 'text', text: { body: 'I passed your message to our team. A human will reply shortly!' } }) }}"
+      },
+      "id": "node-ack-whatsapp",
+      "name": "Ack Customer on WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [940, 160]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ escalated: true, priority: $('Classify Escalation Priority').item.json.priority }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "node-respond-ok",
+      "name": "Respond Handoff OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1180, 160]
+    }
+  ],
+  "connections": {
+    "Handoff Webhook": {
+      "main": [
+        [
+          {
+            "node": "Classify Escalation Priority",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Escalation Priority": {
+      "main": [
+        [
+          {
+            "node": "Notify Team on Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Team on Telegram": {
+      "main": [
+        [
+          {
+            "node": "Ack Customer on WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ack Customer on WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Respond Handoff OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "whatsapp"
+    },
+    {
+      "name": "handoff"
+    }
+  ]
+}

@@ -1,0 +1,122 @@
+{
+  "name": "02 - 24h Appointment WhatsApp Reminder",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "node-cron",
+      "name": "Hourly Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 240]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.WHATSAPP_AGENT_URL }}/appointments",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.ADMIN_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "node-fetch-appts",
+      "name": "Fetch Upcoming Appointments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = Date.now();\nconst in23h = now + 23 * 3600 * 1000;\nconst in24h = now + 24 * 3600 * 1000;\nconst items = $input.all().map(i => i.json);\nreturn items\n  .filter(a => a.status === 'confirmed')\n  .filter(a => {\n    const t = Date.parse(a.start);\n    return Number.isFinite(t) && t >= in23h && t <= in24h;\n  })\n  .map(a => ({ json: a }));"
+      },
+      "id": "node-filter-24h",
+      "name": "Filter 24h Reminder Window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://graph.facebook.com/v21.0/' + $env.WHATSAPP_PHONE_NUMBER_ID + '/messages' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.WHATSAPP_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messaging_product: 'whatsapp', to: $json.phone, type: 'template', template: { name: $env.WHATSAPP_TEMPLATE_NAME || 'appointment_reminder', language: { code: 'en_US' }, components: [{ type: 'body', parameters: [{ type: 'text', text: $json.customer }, { type: 'text', text: $json.service }, { type: 'text', text: $json.start.replace('T', ' ') }] }] } }) }}"
+      },
+      "id": "node-send-template",
+      "name": "Send WhatsApp Template Reminder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [940, 240]
+    }
+  ],
+  "connections": {
+    "Hourly Schedule": {
+      "main": [
+        [
+          {
+            "node": "Fetch Upcoming Appointments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Upcoming Appointments": {
+      "main": [
+        [
+          {
+            "node": "Filter 24h Reminder Window",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter 24h Reminder Window": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Template Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "whatsapp"
+    },
+    {
+      "name": "reminders"
+    }
+  ]
+}

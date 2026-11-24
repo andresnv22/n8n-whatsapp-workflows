@@ -1,0 +1,339 @@
+{
+  "name": "01 - WhatsApp AI Booking Router + Sheets Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "whatsapp-booking",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-verify-get",
+      "name": "WhatsApp Webhook Verify (GET)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 120]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.query['hub.mode'] }}",
+              "value2": "subscribe"
+            },
+            {
+              "value1": "={{ $json.query['hub.verify_token'] }}",
+              "value2": "={{ $env.WHATSAPP_VERIFY_TOKEN }}"
+            }
+          ]
+        }
+      },
+      "id": "node-verify-if",
+      "name": "Verify Token Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 120]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.query['hub.challenge'] }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "node-verify-ok",
+      "name": "Respond Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [700, 60]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Verification failed",
+        "options": {
+          "responseCode": 403
+        }
+      },
+      "id": "node-verify-fail",
+      "name": "Respond 403",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [700, 200]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-booking",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "node-incoming-post",
+      "name": "WhatsApp Incoming (POST)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst entries = body.entry || [];\nconst out = [];\nfor (const e of entries) {\n  for (const c of (e.changes || [])) {\n    const msgs = (c.value && c.value.messages) || [];\n    for (const m of msgs) {\n      const type = m.type || 'unknown';\n      let text = '';\n      if (type === 'text') text = m.text?.body || '';\n      if (type === 'interactive') text = m.interactive?.button_reply?.title || m.interactive?.list_reply?.title || '';\n      out.push({ json: { id: m.id, phone: m.from, type, text, isText: Boolean(text) } });\n    }\n  }\n}\nreturn out;"
+      },
+      "id": "node-parse-msg",
+      "name": "Parse WhatsApp Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 420]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isText }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-is-text",
+      "name": "Is Text Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [700, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WHATSAPP_AGENT_URL }}/sim/chat",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ phone: $json.phone, text: $json.text }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "node-call-agent",
+      "name": "Call WhatsApp AI Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [940, 340]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ ($json.actions || []).some(a => a.tool === 'book_appointment' && !a.error) }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-booking-ok",
+      "name": "Booking Confirmed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1180, 340]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Bookings",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "phone": "={{ $('Parse WhatsApp Message').item.json.phone }}",
+            "reply": "={{ $json.reply }}",
+            "timestamp": "={{ $now.toISO() }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "node-sheets-append",
+      "name": "Log Booking to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1420, 260]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://graph.facebook.com/v21.0/' + $env.WHATSAPP_PHONE_NUMBER_ID + '/messages' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.WHATSAPP_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messaging_product: 'whatsapp', to: $('Parse WhatsApp Message').item.json.phone, type: 'text', text: { body: $('Call WhatsApp AI Agent').item.json.reply } }) }}"
+      },
+      "id": "node-send-reply",
+      "name": "Send WhatsApp Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1660, 340]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://graph.facebook.com/v21.0/' + $env.WHATSAPP_PHONE_NUMBER_ID + '/messages' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $env.WHATSAPP_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messaging_product: 'whatsapp', to: $json.phone, type: 'text', text: { body: 'Sorry, I can only read text messages for now. Please type your request!' } }) }}"
+      },
+      "id": "node-send-unsupported",
+      "name": "Send Unsupported Media Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [940, 520]
+    }
+  ],
+  "connections": {
+    "WhatsApp Webhook Verify (GET)": {
+      "main": [
+        [
+          {
+            "node": "Verify Token Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Token Check": {
+      "main": [
+        [
+          {
+            "node": "Respond Challenge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 403",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp Incoming (POST)": {
+      "main": [
+        [
+          {
+            "node": "Parse WhatsApp Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse WhatsApp Message": {
+      "main": [
+        [
+          {
+            "node": "Is Text Message?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Text Message?": {
+      "main": [
+        [
+          {
+            "node": "Call WhatsApp AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Unsupported Media Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call WhatsApp AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Booking Confirmed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Booking Confirmed?": {
+      "main": [
+        [
+          {
+            "node": "Log Booking to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send WhatsApp Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Booking to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "whatsapp"
+    },
+    {
+      "name": "ai-agent"
+    }
+  ]
+}

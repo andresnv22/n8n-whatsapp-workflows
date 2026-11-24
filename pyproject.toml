@@ -1,0 +1,11 @@
+[project]
+name = "n8n-whatsapp-workflows"
+version = "0.1.0"
+description = "n8n workflow templates integrating WhatsApp Cloud API, AI booking agent, Google Sheets, and reminders"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
